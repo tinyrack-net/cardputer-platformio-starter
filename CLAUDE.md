@@ -24,6 +24,18 @@ PIO=$HOME/.platformio/penv/bin/pio
 "$PIO" run -t upload --upload-port /dev/ttyACM0
 "$PIO" device monitor --port /dev/ttyACM0
 
+# Leave ESP32-S3 download mode / restart the application without flashing.
+# `pio run -t upload` already does this automatically through the post-upload hook in
+# scripts/pio_app_boot.py (esptool's RTS-only hard reset keeps DTR asserted, which the
+# USB-Serial/JTAG auto-reset emulation reads as GPIO0 low, so the chip can stay in
+# download mode after flashing).
+"$PIO" run -t appboot
+
+# Debug over the on-board USB-JTAG (needs the udev rule from ./hotplugSetup.sh, else
+# OpenOCD fails with LIBUSB_ERROR_ACCESS; and the optional package below, once).
+"$PIO" pkg install -g -t "platformio/tool-openocd-esp32@~2.1100.0"
+"$PIO" debug
+
 # Board configuration (Kconfig) is done via sdkconfig.defaults, not menuconfig.
 # Delete the generated sdkconfig.m5stack-cardputer and rebuild to re-apply it.
 
@@ -33,7 +45,9 @@ PIO=$HOME/.platformio/penv/bin/pio
 
 There is no test suite, linter, or CI configured in this repo. `.clang-format` (LLVM-based, 4-space indent, Allman braces) defines the C++ style — run `clang-format` on touched files if available.
 
-`hotplugSetup.sh` is a one-time WSL/udev setup script for USB device passthrough, unrelated to the build itself.
+`hotplugSetup.sh` is a one-time WSL/udev setup script (needs `sudo`) for USB passthrough: it covers
+`/dev/ttyACM0` for flashing/monitoring and adds the udev rule that gives OpenOCD raw access to
+`303a:1001` for `pio debug`.
 
 ### PlatformIO specifics
 
@@ -47,6 +61,10 @@ There is no test suite, linter, or CI configured in this repo. `.clang-format` (
   relative path into the removed vendored `components/M5GFX` folder.
 - Board settings (8 MB flash, custom `partitions.csv`, BLE, USB HID device options) live in
   `sdkconfig.defaults`; the generated `sdkconfig.m5stack-cardputer` is git-ignored.
+- `extra_scripts = post:scripts/pio_app_boot.py` adds a post-upload action (and the `appboot` target)
+  that takes the board out of USB-Serial/JTAG download mode (open the port with DTR/RTS de-asserted;
+  fall back to an RTC watchdog full system reset through the ROM bootloader) and re-attaches the board
+  to WSL if it re-enumerated. Keep it when changing upload settings.
 
 ## Architecture
 

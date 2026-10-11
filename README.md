@@ -27,9 +27,51 @@ pio run
 ```
 
 ```bash
-pio run -t upload     # flash
+pio run -t upload     # flash (and make sure the new firmware actually starts)
 pio device monitor    # serial monitor
+pio run -t appboot    # leave download mode / restart the application on demand
 ```
+
+Uploading is not the end of the story on the Cardputer: the ESP32-S3 talks to the host through its
+built-in USB-Serial/JTAG peripheral, which emulates the EN/GPIO0 auto-reset circuitry of a classic
+USB-to-UART bridge on the DTR/RTS lines. esptool's "hard reset via RTS pin" leaves DTR asserted, which
+that emulation reads as "GPIO0 low", so the chip resets straight back into download mode and a freshly
+flashed board can sit there with a blank display (it then needs a power cycle).
+
+`scripts/pio_app_boot.py` runs after every upload and ends that download mode: it opens the port with
+DTR/RTS de-asserted - the auto-reset a real bridge would perform, which boots the application and keeps
+the USB device alive - and prints the captured boot log. If the console stays silent it falls back to a
+*full* system reset by arming the RTC watchdog through the ROM bootloader (what esptool >= 4.7 offers as
+`--after watchdog-reset`, reimplemented here for the esptool 4.5.1 that PlatformIO ships), and
+re-attaches the board with `usbipd` when WSL loses it on re-enumeration. `pio run -t appboot` does the
+same thing without flashing.
+
+#### Debug
+
+```bash
+pio debug            # GDB + OpenOCD over the on-board USB-JTAG (VSCode: "PIO Debug")
+```
+
+The Cardputer exposes its ESP32-S3 JTAG through the same built-in USB-Serial/JTAG port, so no extra
+probe is needed. GDB is a Xtensa build from the platform (`tool-xtensa-esp-elf-gdb`); OpenOCD is not
+installed by default:
+
+```bash
+pio pkg install -g -t "platformio/tool-openocd-esp32@~2.1100.0"
+```
+
+OpenOCD needs raw USB access to `303a:1001`, which is not granted by default (it fails with
+`libusb_open() failed with LIBUSB_ERROR_ACCESS`). One-time fix, run with `sudo` and re-attach the board
+(this is included in `./hotplugSetup.sh`):
+
+```bash
+echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", MODE="0666", GROUP="plugdev"' \
+    | sudo tee /etc/udev/rules.d/60-espressif-usb-jtag.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=usb
+```
+
+Without JTAG, panics are still readable from the serial monitor: the `esp32_exception_decoder` filter
+in `platformio.ini` turns the backtrace into file/line information.
 
 #### Layout
 
@@ -62,6 +104,14 @@ pio device monitor    # serial monitor
 - Flashing needs write access to `/dev/ttyACM0` (WSL: `usbipd wsl attach ...`). Add your user to the
   `dialout` group (`sudo usermod -aG dialout $USER`, re-login) or run `sudo chmod 666 /dev/ttyACM0`
   after each attach.
+- The application itself never has to be started by hand: `pio run -t upload` finishes by making
+  sure the flashed firmware runs (see "Flash and monitor"). If the board ever stays in download mode
+  anyway (e.g. after a failed upload, or after entering download mode manually), `pio run -t appboot`
+  gets it out, otherwise power-cycle the board once.
+- `pio device monitor` cannot be started from a non-interactive shell (it requires a TTY on stdin);
+  use `./flash.sh` or run it from a terminal.
+- The USB-JTAG device needs the udev rule from `./hotplugSetup.sh` before `pio debug` can talk to it
+  (see "Debug"); serial monitor and flashing only need `/dev/ttyACM0` access.
 
 #### Differences from the upstream source
 
