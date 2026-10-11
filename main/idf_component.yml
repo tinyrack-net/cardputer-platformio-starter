@@ -1,0 +1,19 @@
+## IDF Component Manager Manifest File
+dependencies:
+  idf:
+    version: ">=4.4.0"
+
+  ## Graphics library (identical source to the one vendored upstream)
+  m5stack/m5gfx: "0.1.16"
+
+  ## Wi-Fi ESP-NOW helper component
+  espressif/esp-now: "2.5.1"
+
+  ## TinyUSB for ESP-IDF < 5.0 (USB HID keyboard app)
+  leeebo/tinyusb_src: "0.16.0~4"
+
+  ## App framework used by the upstream demo. Pinned to the upstream tag
+  ## closest to the vendored copy (differs by MC_VERSION and one unused helper).
+  mooncake:
+    git: https://github.com/Forairaaaaa/mooncake.git
+    version: v1.0.2
