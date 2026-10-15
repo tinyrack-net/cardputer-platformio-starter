@@ -9,7 +9,8 @@ cmake_minimum_required(VERSION 3.16)
 # add_definitions(-DMC_USE_CUSTOM_CONF)
 # add_definitions(-DNO_BOOT_PLAY_SHIT)
 
-include_directories(./main/apps/utils/usb_keyboard_wrap/hid_device)
+# TinyUSB looks up "tusb_config.h" through the include path.
+include_directories(./main/hid)
 
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

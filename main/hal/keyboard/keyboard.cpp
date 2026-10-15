@@ -329,10 +329,35 @@ void Keyboard::updateKeysState()
 
 bool Keyboard::isChanged() 
 {
-    if (_last_key_size != _key_list_buffer.size()) 
-    {
-        _last_key_size = _key_list_buffer.size();
-        return true;
-    } 
-    return false;
+    // Compare a hash of the whole decoded state so that modifier-only changes
+    // and held-key changes are detected too (not just the pressed key count).
+    // Callers must call updateKeysState() first.
+    uint32_t hash = 2166136261u;
+    auto mix = [&hash](uint8_t byte) {
+        hash ^= byte;
+        hash *= 16777619u;
+    };
+
+    const KeysState& state = _keys_state_buffer;
+    uint8_t modifiers = 0;
+    modifiers |= state.tab ? 0x01 : 0;
+    modifiers |= state.fn ? 0x02 : 0;
+    modifiers |= state.shift ? 0x04 : 0;
+    modifiers |= state.ctrl ? 0x08 : 0;
+    modifiers |= state.opt ? 0x10 : 0;
+    modifiers |= state.alt ? 0x20 : 0;
+    modifiers |= state.del ? 0x40 : 0;
+    modifiers |= state.enter ? 0x80 : 0;
+    mix(modifiers);
+    mix(state.space ? 1 : 0);
+    mix(_is_caps_locked ? 1 : 0);
+    mix(static_cast<uint8_t>(state.hidKey.size()));
+    for (int hid_key : state.hidKey)
+        mix(static_cast<uint8_t>(hid_key));
+
+    if (hash == _last_state_hash)
+        return false;
+
+    _last_state_hash = hash;
+    return true;
 }
