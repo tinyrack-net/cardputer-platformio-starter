@@ -112,6 +112,13 @@ in `platformio.ini` turns the backtrace into file/line information.
   use `./flash.sh` or run it from a terminal.
 - The USB-JTAG device needs the udev rule from `./hotplugSetup.sh` before `pio debug` can talk to it
   (see "Debug"); serial monitor and flashing only need `/dev/ttyACM0` access.
+- The C/C++ extension cannot describe an Xtensa/ESP-IDF target, so it maps this project to the host
+  `linux-gcc-x64` IntelliSense mode and predefines `__linux__`/`__unix__`/`__i386__`. Header-only spdlog
+  (included through `<mooncake.h>`) then takes its Linux branch and `#include <sys/syscall.h>`, a glibc
+  header ESP-IDF's newlib does not ship - the `cannot open source file "sys/syscall.h"` squiggle in every
+  app source, while `pio run` compiles fine. `.vscode/settings.json` (`C_Cpp.default.forcedInclude`) plus
+  `.vscode/intellisense/esp_idf_undef_host_macros.h` undefine those host macros for IntelliSense only, so
+  the editor matches the real build (vscode-cpptools#4653). Nothing in the build reads that header.
 
 #### Differences from the upstream source
 

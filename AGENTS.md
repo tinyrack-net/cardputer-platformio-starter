@@ -39,6 +39,10 @@ PIO=$HOME/.platformio/penv/bin/pio
 - 업스트림 소스 수정은 최소화한다. 현재 차이는 `main/hal/hal.h`의 `#include <M5GFX.h>` 한 곳뿐이다.
 - `[platformio] src_dir = main` → `main/`이 ESP-IDF 메인 컴포넌트이고 `main/CMakeLists.txt`가 그대로 쓰인다
   (glob 방식이라 앱 폴더를 추가해도 CMake 수정이 필요 없다).
+- IntelliSense용 `.vscode/settings.json`(`C_Cpp.default.forcedInclude`)과
+  `.vscode/intellisense/esp_idf_undef_host_macros.h`는 의도된 설정이다. cpptools가 이 프로젝트를 호스트
+  `linux-gcc-x64` 모드로 취급해 `__linux__`를 정의하므로 spdlog가 ESP-IDF에 없는 `sys/syscall.h`를
+  찾는다. 빌드에는 관여하지 않으니 지우거나 재생성하지 않는다.
 - C++ 스타일은 `.clang-format`(LLVM 기반, 4칸 들여쓰기, Allman). 테스트·린터·CI는 없다.
 
 ## 구조
