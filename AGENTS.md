@@ -5,28 +5,29 @@ v4.4.6**으로 이전한 프로젝트. Arduino가 아니다. 문서는 `README.m
 
 ## 빌드 · 실행
 
-PlatformIO Core는 PATH에 없고 VS Code 확장 설치 경로에 있다.
+Windows 네이티브에서 작업한다(WSL 아님). PlatformIO Core는 PATH에 없고 사용자 프로필 venv에 있다.
 
-```bash
-PIO=$HOME/.platformio/penv/bin/pio
+```powershell
+$PIO = "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe"
 
-"$PIO" run                                        # 빌드
-"$PIO" run -t upload --upload-port /dev/ttyACM0   # 플래시 (앱 부팅까지 자동)
-"$PIO" run -t appboot                             # 플래시 없이 다운로드 모드 탈출/앱 재시작
-./flash.sh                                        # upload + serial monitor (대화형 터미널에서 실행)
-"$PIO" device monitor --port /dev/ttyACM0         # 터미널 필요, 파이프/리다이렉트 불가
+& $PIO run                # 빌드 (클린 빌드 ~2.5분)
+& $PIO run -t upload      # 플래시 (앱 부팅까지 자동, 포트 자동 탐지)
+& $PIO run -t appboot     # 플래시 없이 다운로드 모드 탈출/앱 재실행
+& $PIO device monitor     # 터미널 필요, 파이프/리다이렉트 불가
 ```
 
-- 보드는 내장 USB-Serial/JTAG(`/dev/ttyACM0`, WSL은 usbipd 패스스루)로 연결한다. 최초 1회 `sudo ./hotplugSetup.sh`
-  (시리얼 + USB-JTAG udev 규칙).
+- 보드는 내장 USB-Serial/JTAG로 연결하고 Windows에서는 `COMx`(VID:PID `303A:1001`)로 잡힌다. 시리얼
+  플래시·모니터에 드라이버 설치나 udev/권한 설정이 필요 없다. 포트를 잘못 잡으면 `--upload-port COM3`처럼
+  명시한다. `.pio`(빌드 산출물)는 호스트 간에 공유하지 않는다 — 호스트를 바꾸면 지우고 리빌드한다.
 - esptool의 기본 리셋 때문에 업로드 후 칩이 다운로드 모드(화면 까맣)에 남는다. `scripts/pio_app_boot.py`가
   업로드 후 자동으로 앱을 부팅시키고 부팅 로그를 출력하므로, 업로드 성공 여부는 그 로그로 판단한다.
-  그래도 화면이 까맣면 `pio run -t appboot`, 그다음은 전원 재인가.
-- JTAG 디버깅(`pio debug`)은 `platformio/tool-openocd-esp32` 설치 + 위 udev 규칙이 있어야 한다(없으면
-  `LIBUSB_ERROR_ACCESS`).
-- 첫 빌드는 ESP-IDF 툴체인과 관리 컴포넌트를 내려받는다(네트워크 필요, 수 분). Python 3.13+ 호스트는
-  ESP-IDF용 가상환경 `~/.platformio/penv/.espidf-4.4.6`을 3.12 이하로 만들어야 한다 — 명령은 `README.md`
-  "Environment notes" 참고.
+  그래도 화면이 까맣면 `pio run -t appboot`, 그다음은 전원 재인가. 훅은 pyserial 기반이라 Windows/Linux
+  양쪽에서 동작한다.
+- JTAG 디버깅(`pio debug`)은 `platformio/tool-openocd-esp32` 설치가 필요하고, Windows에서는 Espressif의
+  WinUSB 드라이버를 한 번 설치해야 한다(없으면 `LIBUSB_ERROR_NOT_FOUND`) — 명령은 `README.md` "Debug" 참고.
+- 첫 빌드는 ESP-IDF 툴체인과 관리 컴포넌트를 내려받는다(네트워크 필요, 수 분). PlatformIO Core Python은
+  3.11이라 ESP-IDF용 venv(`%USERPROFILE%\.platformio\penv\.espidf-4.4.6`)를 그대로 쓸 수 있다. Python
+  3.13+ 호스트에서는 그 venv를 3.12 이하로 다시 만들어야 한다 — `README.md` "Environment notes" 참고.
 
 ## 지켜야 할 것
 
@@ -40,9 +41,10 @@ PIO=$HOME/.platformio/penv/bin/pio
 - `[platformio] src_dir = main` → `main/`이 ESP-IDF 메인 컴포넌트이고 `main/CMakeLists.txt`가 그대로 쓰인다
   (glob 방식이라 앱 폴더를 추가해도 CMake 수정이 필요 없다).
 - IntelliSense용 `.vscode/settings.json`(`C_Cpp.default.forcedInclude`)과
-  `.vscode/intellisense/esp_idf_undef_host_macros.h`는 의도된 설정이다. cpptools가 이 프로젝트를 호스트
-  `linux-gcc-x64` 모드로 취급해 `__linux__`를 정의하므로 spdlog가 ESP-IDF에 없는 `sys/syscall.h`를
-  찾는다. 빌드에는 관여하지 않으니 지우거나 재생성하지 않는다.
+  `.vscode/intellisense/esp_idf_undef_host_macros.h`는 의도된 설정이다. cpptools는 이 프로젝트를 호스트
+  IntelliSense 모드로 취급해 플랫폼 매크로를 정의하므로(`linux-gcc-x64`의 `__linux__`, `windows-msvc-x64`의
+  `_WIN32`) spdlog가 ESP-IDF에 없는 `sys/syscall.h`나 `windows.h`를 찾는다. shim은 그 매크로들을
+  IntelliSense에서만 undef한다. 빌드에는 관여하지 않으니 지우거나 재생성하지 않는다.
 - C++ 스타일은 `.clang-format`(LLVM 기반, 4칸 들여쓰기, Allman). 테스트·린터·CI는 없다.
 
 ## 구조

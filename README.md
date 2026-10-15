@@ -1,68 +1,77 @@
 # M5Cardputer-UserDemo (PlatformIO)
 
-M5Cardputer user demo for hardware evaluation, migrated from the upstream
-[M5Stack/M5Cardputer-UserDemo](https://github.com/m5stack/M5Cardputer-UserDemo)
-ESP-IDF project to a PlatformIO project.
+하드웨어 확인용 M5Cardputer 사용자 데모. 업스트림
+[M5Stack/M5Cardputer-UserDemo](https://github.com/m5stack/M5Cardputer-UserDemo) ESP-IDF 프로젝트를
+PlatformIO 프로젝트로 이전했다. Arduino가 아니며, Windows 네이티브를 기준으로 쓰여 있다(리눅스도 동일하게
+동작한다).
 
-> **Note: If you are using Cardputer ADV, please use the [CardputerADV branch](https://github.com/m5stack/M5Cardputer-UserDemo/tree/CardputerADV).**
+> **Cardputer ADV를 사용한다면 [CardputerADV 브랜치](https://github.com/m5stack/M5Cardputer-UserDemo/tree/CardputerADV)를 사용한다.**
 
-#### Tool Chains
+#### 툴체인
 
 [PlatformIO Core](https://docs.platformio.org/) (`espressif32@6.6.0`) + [ESP-IDF v4.4.6](https://docs.espressif.com/projects/esp-idf/en/v4.4.6/esp32s3/index.html)
 
-The ESP-IDF toolchain and the managed components are downloaded automatically by
-PlatformIO on the first build.
+ESP-IDF 툴체인과 관리 컴포넌트는 첫 빌드 때 PlatformIO가 자동으로 내려받는다(네트워크 필요, 수 분).
 
-#### Build
+#### 빌드
 
 ```bash
 pio run
 ```
 
-#### Flash and monitor
+#### 플래시 · 모니터
 
 ```bash
-# WSL: attach the board first with `usbipd wsl attach -a -b [BUSID]`
-./flash.sh            # pio run -t upload + serial monitor on /dev/ttyACM0
+pio run -t upload     # 플래시 후 앱을 부팅시키고 부팅 로그를 출력
+pio device monitor    # 시리얼 모니터 (대화형 터미널 필요)
+pio run -t appboot    # 플래시 없이 다운로드 모드 탈출 / 앱 재실행
 ```
+
+PlatformIO가 USB ID(`303a:1001`)로 보드를 찾으므로 포트를 지정할 필요가 없다 — Windows는 `COM3`,
+리눅스는 `/dev/ttyACM0`. 다른 어댑터가 먼저 잡히면 `--upload-port COM3` / `--port COM3`처럼 명시한다.
+
+Cardputer에서 업로드는 끝이 아니다. ESP32-S3는 내장 USB-Serial/JTAG 주변장치로 호스트와 통신하는데, 이
+장치가 클래식 USB-UART 브리지의 EN/GPIO0 자동 리셋 회로를 DTR/RTS 라인으로 흉내 낸다. esptool의
+"RTS 핀 하드 리셋"은 DTR을 asserted 상태로 남기고, 흉내 낸 회로는 그것을 "GPIO0 low"로 읽는다. 그래서
+칩이 곧바로 다운로드 모드로 다시 리셋되고, 방금 플래시한 보드는 화면이 까만 채로 남을 수 있다(이때는
+전원을 한 번 재인가해야 한다).
+
+`scripts/pio_app_boot.py`가 매 업로드 후 실행되어 그 다운로드 모드를 끝낸다. DTR/RTS를 de-assert한
+상태로 포트를 열고(실제 브리지가 하는 자동 리셋) 애플리케이션과 USB 장치를 살린 뒤, 캡처한 부팅 로그를
+출력한다. 콘솔이 조용하면 ROM 부트로더를 통해 RTC 워치독을 무장시켜 *전체* 시스템 리셋으로 넘어간다
+(esptool 4.7 이상의 `--after watchdog-reset`을, PlatformIO가 함께 제공하는 esptool 4.5.1용으로 재구현).
+`pio run -t appboot`은 플래시 없이 같은 동작만 한다. 이 훅은 호스트 종류와 무관하다: 보드 포트를 pyserial과
+USB ID로 찾으므로 Windows(`COMx`)와 리눅스(`/dev/ttyACM*`)에서 똑같이 동작한다.
+
+#### 디버그
 
 ```bash
-pio run -t upload     # flash (and make sure the new firmware actually starts)
-pio device monitor    # serial monitor
-pio run -t appboot    # leave download mode / restart the application on demand
+pio debug            # 내장 USB-JTAG로 GDB + OpenOCD (VSCode: "PIO Debug")
 ```
 
-Uploading is not the end of the story on the Cardputer: the ESP32-S3 talks to the host through its
-built-in USB-Serial/JTAG peripheral, which emulates the EN/GPIO0 auto-reset circuitry of a classic
-USB-to-UART bridge on the DTR/RTS lines. esptool's "hard reset via RTS pin" leaves DTR asserted, which
-that emulation reads as "GPIO0 low", so the chip resets straight back into download mode and a freshly
-flashed board can sit there with a blank display (it then needs a power cycle).
-
-`scripts/pio_app_boot.py` runs after every upload and ends that download mode: it opens the port with
-DTR/RTS de-asserted - the auto-reset a real bridge would perform, which boots the application and keeps
-the USB device alive - and prints the captured boot log. If the console stays silent it falls back to a
-*full* system reset by arming the RTC watchdog through the ROM bootloader (what esptool >= 4.7 offers as
-`--after watchdog-reset`, reimplemented here for the esptool 4.5.1 that PlatformIO ships), and
-re-attaches the board with `usbipd` when WSL loses it on re-enumeration. `pio run -t appboot` does the
-same thing without flashing.
-
-#### Debug
-
-```bash
-pio debug            # GDB + OpenOCD over the on-board USB-JTAG (VSCode: "PIO Debug")
-```
-
-The Cardputer exposes its ESP32-S3 JTAG through the same built-in USB-Serial/JTAG port, so no extra
-probe is needed. GDB is a Xtensa build from the platform (`tool-xtensa-esp-elf-gdb`); OpenOCD is not
-installed by default:
+Cardputer는 ESP32-S3 JTAG을 같은 내장 USB-Serial/JTAG 포트로 노출하므로 별도 프로브가 필요 없다. GDB는
+플랫폼이 제공하는 Xtensa 빌드(`tool-xtensa-esp-elf-gdb`)이고, OpenOCD는 기본 설치되지 않는다:
 
 ```bash
 pio pkg install -g -t "platformio/tool-openocd-esp32@~2.1100.0"
 ```
 
-OpenOCD needs raw USB access to `303a:1001`, which is not granted by default (it fails with
-`libusb_open() failed with LIBUSB_ERROR_ACCESS`). One-time fix, run with `sudo` and re-attach the board
-(this is included in `./hotplugSetup.sh`):
+OpenOCD는 `303a:1001`에 대한 raw USB 접근이 필요한데, 기본 상태에서는 허용되지 않는다.
+
+Windows에서는 (복합 USB-Serial/JTAG 장치의 `MI_02` 인터페이스인) JTAG 인터페이스에 범용 WinUSB
+드라이버가 물려 있어 OpenOCD가 `libusb_open() failed with LIBUSB_ERROR_NOT_FOUND`로 실패한다.
+[ESP-IDF 문서](https://docs.espressif.com/projects/esp-idf/en/v4.4.6/esp32s3/api-guides/jtag-debugging/configure-builtin-jtag.html)가
+이 오류의 해결책으로 제시하는 것은 Espressif의 WinUSB 드라이버다. 관리자 셸에서 한 번 설치하고 보드를
+재연결한다. ESP-IDF Tools Installer에서는 "Espressif - WinUSB support for JTAG (ESP32-C3/S3)" 항목이
+같은 역할을 한다:
+
+```powershell
+Invoke-WebRequest 'https://dl.espressif.com/dl/idf-env/idf-env.exe' -OutFile .\idf-env.exe
+.\idf-env.exe driver install --espressif
+```
+
+리눅스에서는 장치 노드가 root 전용이라 `libusb_open() failed with LIBUSB_ERROR_ACCESS`로 실패한다.
+`303a:1001` udev 규칙을 한 번 추가한다:
 
 ```bash
 echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", MODE="0666", GROUP="plugdev"' \
@@ -70,57 +79,57 @@ echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", MODE
 sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=usb
 ```
 
-Without JTAG, panics are still readable from the serial monitor: the `esp32_exception_decoder` filter
-in `platformio.ini` turns the backtrace into file/line information.
+JTAG 없이도 패닉은 시리얼 모니터로 읽을 수 있다. `platformio.ini`의 `esp32_exception_decoder` 필터가
+백트레이스를 파일/라인 정보로 바꿔 준다.
 
-#### Layout
+#### 구조
 
-- `main/` — the ESP-IDF project component (kept in the upstream layout, see `src_dir` in `platformio.ini`).
-- `components/` — project components. Only `infrared_tools` is vendored here; everything else is resolved as a managed component.
-- `main/idf_component.yml` — dependency manifest. `m5stack/m5gfx` (0.1.16), `espressif/esp-now` (2.5.1) and
-  `leeebo/tinyusb_src` (0.16.0~4) come from the ESP Component Registry, `mooncake` (tag `v1.0.2`) from Git.
-  They are downloaded into `managed_components/` (not tracked).
-- `sdkconfig.defaults` — board configuration (8 MB flash, custom `partitions.csv`, BLE, USB HID device).
-  The generated `sdkconfig.m5stack-cardputer` is not tracked.
+- `main/` — ESP-IDF 프로젝트 컴포넌트 (업스트림 레이아웃 유지, `platformio.ini`의 `src_dir` 참고).
+- `components/` — 프로젝트 컴포넌트. `infrared_tools`만 벤더링해 두었고 나머지는 관리 컴포넌트로 해결한다.
+- `main/idf_component.yml` — 의존성 매니페스트. `m5stack/m5gfx`(0.1.16), `espressif/esp-now`(2.5.1),
+  `leeebo/tinyusb_src`(0.16.0~4)는 ESP Component Registry에서, `mooncake`(tag `v1.0.2`)는 Git에서 받는다.
+  내려받은 것은 `managed_components/`에 들어가며 추적하지 않는다.
+- `sdkconfig.defaults` — 보드 설정(8 MB flash, 사용자 `partitions.csv`, BLE, USB HID device).
+  생성물 `sdkconfig.m5stack-cardputer`는 추적하지 않는다.
 
-#### Environment notes
+#### 환경 관련 주의
 
-- `platformio.ini` pins `espressif32@6.6.0`, `framework-espidf@~3.40406.0` (v4.4.6) and the
-  `toolchain-xtensa-esp32s3@8.4.0+2021r2-patch5` GCC toolchain. Newer PlatformIO releases select the
-  GCC 13 toolchain, which does not compile ESP-IDF v4.4 (format-string and `sre_constants` era breakage).
-- PlatformIO keeps ESP-IDF's Python dependencies in `~/.platformio/penv/.espidf-4.4.6`. PlatformIO pins
-  `pyparsing<2.4` for ESP-IDF < 5, and that version cannot be imported on Python 3.13+ (`sre_constants`
-  was removed). On such hosts the virtual env has to be created with a Python <= 3.12 and PlatformIO's
-  dependencies installed into it, e.g.:
+- `platformio.ini`는 `espressif32@6.6.0`, `framework-espidf@~3.40406.0`(v4.4.6),
+  `toolchain-xtensa-esp32s3@8.4.0+2021r2-patch5` GCC 툴체인을 고정한다. 최신 PlatformIO 릴리스는 GCC 13
+  툴체인을 선택하는데, 그것으로는 ESP-IDF v4.4를 컴파일하지 못한다(format-string, `sre_constants` 관련
+  문제).
+- PlatformIO는 ESP-IDF의 Python 의존성을 PlatformIO Core 옆인 `~/.platformio/penv/.espidf-4.4.6`
+  (Windows는 `%USERPROFILE%\.platformio\penv\.espidf-4.4.6`)에 둔다. PlatformIO는 ESP-IDF < 5를 위해
+  `pyparsing<2.4`를 고정하는데, 그 버전은 Python 3.13+에서 import할 수 없다(`sre_constants` 제거됨).
+  그런 호스트에서는 Python 3.8~3.12로 가상환경을 다시 만들고 PlatformIO 의존성을 설치해야 한다:
 
-  ```bash
-  PY=$(mise where python@3.12)/bin/python3.12   # or any Python 3.8 - 3.12
-  VENV=$HOME/.platformio/penv/.espidf-4.4.6
-  $PY -m venv "$VENV"
-  $VENV/bin/python -m pip install -U "urllib3<2" "cryptography>=2.1.4,<35.0.0" "future>=0.18.3" \
-      "pyparsing>=2.0.3,<2.4.0" "kconfiglib~=13.7.1" "idf-component-manager~=1.0" "esp-idf-kconfig>=1.4.2,<2.0.0"
-  printf '{\n  "version": "1.0.0"\n}\n' > "$VENV/pio-idf-venv.json"
+  ```powershell
+  $VENV = "$env:USERPROFILE\.platformio\penv\.espidf-4.4.6"
+  py -3.12 -m venv $VENV                       # Python 3.8 - 3.12, 3.13+는 안 된다
+  & "$VENV\Scripts\python.exe" -m pip install -U "urllib3<2" "cryptography>=2.1.4,<35.0.0" `
+      "future>=0.18.3" "pyparsing>=2.0.3,<2.4.0" "kconfiglib~=13.7.1" "idf-component-manager~=1.0" `
+      "esp-idf-kconfig>=1.4.2,<2.0.0"
+  '{"version": "1.0.0"}' | Set-Content "$VENV\pio-idf-venv.json"
   ```
-- Flashing needs write access to `/dev/ttyACM0` (WSL: `usbipd wsl attach ...`). Add your user to the
-  `dialout` group (`sudo usermod -aG dialout $USER`, re-login) or run `sudo chmod 666 /dev/ttyACM0`
-  after each attach.
-- The application itself never has to be started by hand: `pio run -t upload` finishes by making
-  sure the flashed firmware runs (see "Flash and monitor"). If the board ever stays in download mode
-  anyway (e.g. after a failed upload, or after entering download mode manually), `pio run -t appboot`
-  gets it out, otherwise power-cycle the board once.
-- `pio device monitor` cannot be started from a non-interactive shell (it requires a TTY on stdin);
-  use `./flash.sh` or run it from a terminal.
-- The USB-JTAG device needs the udev rule from `./hotplugSetup.sh` before `pio debug` can talk to it
-  (see "Debug"); serial monitor and flashing only need `/dev/ttyACM0` access.
-- The C/C++ extension cannot describe an Xtensa/ESP-IDF target, so it maps this project to the host
-  `linux-gcc-x64` IntelliSense mode and predefines `__linux__`/`__unix__`/`__i386__`. Header-only spdlog
-  (included through `<mooncake.h>`) then takes its Linux branch and `#include <sys/syscall.h>`, a glibc
-  header ESP-IDF's newlib does not ship - the `cannot open source file "sys/syscall.h"` squiggle in every
-  app source, while `pio run` compiles fine. `.vscode/settings.json` (`C_Cpp.default.forcedInclude`) plus
-  `.vscode/intellisense/esp_idf_undef_host_macros.h` undefine those host macros for IntelliSense only, so
-  the editor matches the real build (vscode-cpptools#4653). Nothing in the build reads that header.
+- Windows에서는 플래시·모니터에 드라이버 설치나 권한 설정이 필요 없다: 보드가 `USB Serial Device (COMx)`로
+  나타난다. 리눅스에서는 `/dev/ttyACM0` 접근 권한을 대신 부여한다(`dialout` 그룹, 또는 보드 연결 후
+  `sudo chmod 666 /dev/ttyACM0`).
+- 애플리케이션을 손으로 시작할 일은 없다: `pio run -t upload`가 플래시한 펌웨어가 실제로 실행되도록
+  끝맺는다("플래시 · 모니터" 참고). 그래도 보드가 다운로드 모드에 남으면(업로드 실패 후, 또는 수동으로
+  다운로드 모드에 들어간 뒤) `pio run -t appboot`으로 빠져나오고, 그다음은 전원을 재인가한다.
+- `pio device monitor`는 비대화형 셸에서 시작할 수 없다(stdin에 TTY가 필요하다). 파이프나 리다이렉트로는
+  실행할 수 없고 터미널 창에서 실행한다.
+- C/C++ 확장은 Xtensa/ESP-IDF 타깃을 표현할 수 없다. 호스트 IntelliSense 모드만 알고 있어, 분류할 수 없는
+  컴파일러에 대해서는 타깃 매크로 위에 호스트 매크로를 덧붙인다 — `linux-gcc-x64` 모드는
+  `__linux__`/`__unix__`/`__i386__`를, `windows-msvc-x64` 모드는 `_WIN32`/`_MSC_VER`를 추가한다. 그러면
+  헤더 온리 spdlog(`<mooncake.h>`로 포함)가 리눅스 분기(`#include <sys/syscall.h>`)나 Windows
+  분기(`#include <windows.h>`)를 타는데, 둘 다 ESP-IDF의 newlib에 없다 — `pio run`은 정상 컴파일되는데
+  모든 앱 소스에 `cannot open source file` 물결 표시가 뜨는 이유다. `.vscode/settings.json`
+  (`C_Cpp.default.forcedInclude`)과 `.vscode/intellisense/esp_idf_undef_host_macros.h`가 그 호스트
+  매크로들을 IntelliSense에서만 undef해 에디터를 실제 빌드와 일치시킨다(vscode-cpptools#4653). 빌드
+  과정에서 이 헤더를 읽는 곳은 없다.
 
-#### Differences from the upstream source
+#### 업스트림 소스와의 차이
 
-- `main/hal/hal.h` includes `<M5GFX.h>` instead of the vendored
-  `"../../components/M5GFX/src/M5GFX.h"`, because M5GFX is resolved as a managed component now.
+- `main/hal/hal.h`가 벤더링된 `"../../components/M5GFX/src/M5GFX.h"` 대신 `<M5GFX.h>`를 포함한다.
+  M5GFX가 이제 관리 컴포넌트로 해결되기 때문이다.

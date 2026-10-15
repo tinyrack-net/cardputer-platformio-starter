@@ -1,9 +1,11 @@
 {
     // The C/C++ extension maps this project to the host IntelliSense mode
-    // (linux-gcc-x64) and predefines __linux__/__unix__/__i386__, although the
+    // (linux-gcc-x64 / windows-msvc-x64) and predefines that host's macros
+    // (__linux__/__unix__/__i386__ or _WIN32/_MSC_VER), although the
     // Xtensa/ESP-IDF toolchain defines none of them. spdlog (header-only, via
-    // <mooncake.h>) then includes <sys/syscall.h>, which ESP-IDF's newlib does
-    // not ship. Undefine the assumed host macros for IntelliSense only.
+    // <mooncake.h>) then includes <sys/syscall.h> or <windows.h>, neither of
+    // which ESP-IDF's newlib ships. Undefine the assumed host macros for
+    // IntelliSense only.
     // See .vscode/intellisense/esp_idf_undef_host_macros.h and
     // https://github.com/microsoft/vscode-cpptools/issues/4653
     "C_Cpp.default.forcedInclude": [

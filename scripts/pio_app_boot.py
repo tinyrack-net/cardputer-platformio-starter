@@ -24,8 +24,7 @@ Two ways out of download mode, both used by :func:`boot_application`:
   reset. This is what esptool >= 4.7 does for ``--after watchdog-reset``; the
   esptool bundled with platform-espressif32 6.6.0 (4.5.1) cannot do it, so the
   registers are written here directly. It is the fallback for a chip that stays in
-  download mode anyway. On WSL the re-enumeration that follows is handled with
-  ``usbipd``.
+  download mode anyway.
 
 Either way the script prints the application log, so the upload result can be judged
 from the console instead of the bare "write successful" of esptool.
@@ -38,14 +37,16 @@ References
 """
 
 import contextlib
-import fcntl
-import glob
 import io
 import os
-import subprocess
 import sys
-import termios
 import time
+
+try:  # pyserial, shipped with PlatformIO Core, on every host
+    import serial
+    import serial.tools.list_ports
+except ImportError:  # pragma: no cover - only in a broken PlatformIO install
+    serial = None
 
 Import("env")  # noqa: F821 - provided by PlatformIO's SCons environment
 
@@ -60,8 +61,11 @@ RTC_CNTL_FORCE_DOWNLOAD_BOOT_MASK = 0x1
 # enable WDT | stage0 = system reset | 2 us timeout scale
 RTC_CNTL_WDTCONFIG0_VALUE = (1 << 31) | (5 << 28) | (1 << 8) | 2
 
-USB_SERIAL_JTAG_VID_PID = "303a:1001"
-USBIPD_EXE = "/mnt/c/Program Files/usbipd-win/usbipd.exe"
+# USB IDs of the ESP32-S3 built-in USB-Serial/JTAG: the CDC interface of that
+# composite device is the port used here (``COMx`` on Windows, ``/dev/ttyACM*``
+# on Linux).
+USB_SERIAL_JTAG_VID = 0x303A
+USB_SERIAL_JTAG_PID = 0x1001
 
 
 def _log(message):
@@ -70,12 +74,35 @@ def _log(message):
 
 
 def _candidate_ports():
-    return sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*"))
+    """Every serial port that could be the board, most likely first.
+
+    Sorting by USB ID keeps unrelated adapters at the back of the list, so a host
+    that also has a legacy ``COM1`` still finds the board first.
+    """
+
+    def rank(port):
+        if (port.vid, port.pid) == (USB_SERIAL_JTAG_VID, USB_SERIAL_JTAG_PID):
+            return 0
+        if port.vid == USB_SERIAL_JTAG_VID:
+            return 1
+        if port.vid is not None:
+            return 2
+        return 3  # a legacy UART, e.g. COM1
+
+    ports = serial.tools.list_ports.comports()
+    return [port.device for port in sorted(ports, key=lambda p: (rank(p), p.device))]
+
+
+def _port_exists(port):
+    """Is this still a usable serial port? (``COM3`` is not a filesystem path.)"""
+    if os.path.exists(port):
+        return True
+    return port in _candidate_ports()
 
 
 def _upload_port(env):
     port = (env.subst("$UPLOAD_PORT") or "").strip().strip('"')
-    if port and os.path.exists(port):
+    if port and _port_exists(port):
         return port
     ports = _candidate_ports()
     return ports[0] if ports else None
@@ -89,8 +116,6 @@ def _open_port(port):
     matters as well: while the application runs, nothing drains its console input, so
     an unbounded write would block forever.
     """
-    import serial  # pyserial, shipped with PlatformIO Core
-
     handle = serial.Serial()
     handle.port = port
     handle.baudrate = 115200
@@ -106,11 +131,16 @@ def _close_port(handle):
     """Close the port without waiting for unread console input to drain.
 
     While the application runs nothing consumes its console input, so the USB CDC
-    output buffer never empties and a plain close() blocks for ~30 s. Discarding the
-    untransmitted bytes first makes the close immediate.
+    output buffer never empties and a plain close() can block for ~30 s. Discarding
+    the untransmitted bytes first makes the close immediate.
     """
     try:
-        termios.tcflush(handle.fileno(), termios.TCOFLUSH)
+        if os.name == "posix":
+            import termios  # flush the output queue only
+
+            termios.tcflush(handle.fileno(), termios.TCOFLUSH)
+        else:
+            handle.reset_output_buffer()  # PurgeComm(PURGE_TXABORT | PURGE_TXCLEAR)
     except Exception:
         pass
     try:
@@ -160,54 +190,9 @@ def _watchdog_reset(esp):
         pass  # the chip resets before it can answer
 
 
-def _is_wsl():
-    try:
-        with open("/proc/version") as version_file:
-            return "microsoft" in version_file.read().lower()
-    except Exception:
-        return False
-
-
-def _usbipd_reattach():
-    """Best effort: attach the re-enumerated board back to WSL."""
-    if not _is_wsl() or not os.path.exists(USBIPD_EXE):
-        return False
-    try:
-        listing = subprocess.run(
-            [USBIPD_EXE, "list"], capture_output=True, text=True, timeout=60
-        )
-    except Exception as error:
-        _log("usbipd list failed: %r" % (error,))
-        return False
-    bus_id = None
-    for line in ("%s%s" % (listing.stdout, listing.stderr)).splitlines():
-        fields = line.split()
-        if len(fields) >= 2 and fields[1] == USB_SERIAL_JTAG_VID_PID:
-            bus_id = fields[0]
-            break
-    if bus_id is None:
-        _log("usbipd: %s not listed" % USB_SERIAL_JTAG_VID_PID)
-        return False
-    try:
-        attach = subprocess.run(
-            [USBIPD_EXE, "attach", "--wsl", "--busid", bus_id],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-    except Exception as error:
-        _log("usbipd attach failed: %r" % (error,))
-        return False
-    for line in ("%s%s" % (attach.stdout, attach.stderr)).splitlines():
-        if line.strip():
-            _log("usbipd: %s" % line.strip())
-    return attach.returncode == 0
-
-
 def _wait_for_port(timeout=20.0):
     """Wait until the board re-enumerates as a usable serial port."""
     deadline = time.time() + timeout
-    reattach_tried = False
     while time.time() < deadline:
         for port in _candidate_ports():
             try:
@@ -215,9 +200,6 @@ def _wait_for_port(timeout=20.0):
                 return port
             except Exception:
                 continue
-        if not reattach_tried and time.time() > deadline - timeout + 6.0:
-            reattach_tried = True
-            _usbipd_reattach()
         time.sleep(0.5)
     return None
 
@@ -310,10 +292,7 @@ def _reset_download_mode(port, esp, handle):
     time.sleep(1.0)
     port = _wait_for_port()
     if port is None:
-        _log(
-            "board did not come back as a serial port; on WSL re-attach it with "
-            "`usbipd attach --wsl --busid <busid>`, otherwise power-cycle it"
-        )
+        _log("board did not come back as a serial port; power-cycle it")
         return False
     return _show_console(port)
 
@@ -336,10 +315,8 @@ def boot_application(env):
     presence of bytes on the port: the console queue also replays the previous
     boot log after a reset.
     """
-    try:
-        import serial  # noqa: F401
-    except Exception as error:
-        _log("pyserial not available (%r), skipping" % (error,))
+    if serial is None:
+        _log("pyserial is not available, skipping")
         return
 
     port = _upload_port(env)
