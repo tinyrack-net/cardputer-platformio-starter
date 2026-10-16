@@ -233,6 +233,7 @@ void BleHid::_validateSlots()
         return;
     }
 
+    // Drop slot entries whose Bluedroid bond no longer exists.
     for (uint8_t slot = 0; slot < ConfigStore::kSlotNum; slot++)
     {
         uint8_t addr[ConfigStore::kAddrLen];
@@ -253,6 +254,28 @@ void BleHid::_validateSlots()
         {
             ESP_LOGW(TAG, "slot %u bond missing, clearing", slot);
             _config->clearSlotAddr(slot);
+        }
+    }
+
+    // Remove Bluedroid bonds no slot points at (e.g. left over from another
+    // firmware). The HID OS cannot use them, and keeping them lets an old peer
+    // keep retrying an encryption this device can no longer answer.
+    for (int i = 0; i < bond_num; i++)
+    {
+        bool known = false;
+        for (uint8_t slot = 0; slot < ConfigStore::kSlotNum && !known; slot++)
+        {
+            uint8_t addr[ConfigStore::kAddrLen];
+            if (_config->getSlotAddr(slot, addr) && memcmp(bond_list[i].bd_addr, &addr[1], 6) == 0)
+                known = true;
+        }
+
+        if (!known)
+        {
+            ESP_LOGW(TAG, "removing unknown bond %02x:%02x:%02x:%02x:%02x:%02x",
+                     bond_list[i].bd_addr[0], bond_list[i].bd_addr[1], bond_list[i].bd_addr[2],
+                     bond_list[i].bd_addr[3], bond_list[i].bd_addr[4], bond_list[i].bd_addr[5]);
+            esp_ble_remove_bond_device(bond_list[i].bd_addr);
         }
     }
 }

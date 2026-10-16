@@ -515,6 +515,12 @@ static void ble_gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_p
      * */
     case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
         ESP_LOGV(TAG, "BLE GAP ADV_DATA_SET_COMPLETE");
+        SEND_BLE_CB();
+        break;
+
+    case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
+        ESP_LOGV(TAG, "BLE GAP SCAN_RSP_DATA_SET_COMPLETE");
+        SEND_BLE_CB();
         break;
 
     case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
@@ -625,20 +631,22 @@ esp_err_t esp_hid_ble_gap_adv_init(uint16_t appearance, const char *device_name)
         0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x12, 0x18, 0x00, 0x00,
     };
 
+    // The 128-bit HID service UUID already fills most of the 31-byte legacy
+    // advertising packet, so the device name goes into the scan response
+    // instead of being silently truncated ("Partial data write into ADV").
     esp_ble_adv_data_t ble_adv_data = {
         .set_scan_rsp = false,
-        .include_name = true,
-        .include_txpower = true,
-        .min_interval = 0x0006, //slave connection min interval, Time = min_interval * 1.25 msec
-        .max_interval = 0x0010, //slave connection max interval, Time = max_interval * 1.25 msec
+        .include_name = false,
+        .include_txpower = false,
         .appearance = appearance,
-        .manufacturer_len = 0,
-        .p_manufacturer_data =  NULL,
-        .service_data_len = 0,
-        .p_service_data = NULL,
         .service_uuid_len = sizeof(hidd_service_uuid128),
         .p_service_uuid = (uint8_t *)hidd_service_uuid128,
         .flag = 0x6,
+    };
+
+    esp_ble_adv_data_t ble_scan_rsp = {
+        .set_scan_rsp = true,
+        .include_name = true,
     };
 
     esp_ble_auth_req_t auth_req = ESP_LE_AUTH_REQ_SC_BOND;
@@ -681,6 +689,17 @@ esp_err_t esp_hid_ble_gap_adv_init(uint16_t appearance, const char *device_name)
     if ((ret = esp_ble_gap_config_adv_data(&ble_adv_data)) != ESP_OK) {
         ESP_LOGE(TAG, "GAP config_adv_data failed: %d", ret);
         return ret;
+    }
+    if (xSemaphoreTake(ble_hidh_cb_semaphore, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGW(TAG, "adv data set did not complete");
+    }
+
+    if ((ret = esp_ble_gap_config_adv_data(&ble_scan_rsp)) != ESP_OK) {
+        ESP_LOGE(TAG, "GAP config_scan_rsp_data failed: %d", ret);
+        return ret;
+    }
+    if (xSemaphoreTake(ble_hidh_cb_semaphore, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGW(TAG, "scan rsp data set did not complete");
     }
 
     return ret;
